@@ -148,7 +148,14 @@ fn open_settings_impl(app: tauri::AppHandle) {
             .resizable(false)
             .build()
         {
-            Ok(_) => dlog("open_settings: window created"),
+            Ok(w) => {
+                // Windows can create this webview without activating it, leaving it
+                // hidden behind the current foreground application.
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+                dlog("open_settings: window created and focused");
+            }
             Err(e) => dlog(&format!("open_settings: BUILD FAILED: {e}")),
         }
     });
