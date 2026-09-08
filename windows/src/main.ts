@@ -48,20 +48,9 @@ function syncProjectWindows() {
   void invoke("sync_project_windows", { projects: ids });
 }
 import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 
-// Auto-update on launch (no-op offline / when no signed release is published).
-// Main window only , the per-project windows share the same binary.
-if (IS_MAIN) (async () => {
-  try {
-    const update = await check();
-    if (update) {
-      await update.downloadAndInstall();
-      await relaunch();
-    }
-  } catch {}
-})();
+// Updates are user-initiated from the tray popover. Do not silently replace
+// this customized build when the main window starts.
 
 const canvas = document.getElementById("pet") as HTMLCanvasElement;
 const bubbleEl = document.getElementById("bubble") as HTMLDivElement;

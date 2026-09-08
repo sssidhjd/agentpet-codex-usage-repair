@@ -17,6 +17,9 @@ This is not an upstream release and the portable executable is not vendor-signed
   Re-delivery, restart, and switching pets do not replay previously accepted usage.
 - Baseline pre-existing files on first use. Historic counts from the old reader
   are ambiguous and are not blindly replayed or subtracted.
+- Disable automatic and one-click in-place updates for this customized executable,
+  because an upstream replacement would remove the reviewed local repairs. Future
+  upgrades must be rebuilt from the repair overlay first.
 
 The reader does not modify Codex logs, change hooks trust, or upload conversations.
 Receipts stay local and are omitted from the existing web-profile sync payload.

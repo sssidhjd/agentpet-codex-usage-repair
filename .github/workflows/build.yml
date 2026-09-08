@@ -33,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $files = @('src/care.ts', 'src/main.ts', 'src-tauri/src/lib.rs', 'src-tauri/src/server.rs', 'src-tauri/src/codex_usage.rs', 'scripts/codex-usage.test.mjs')
+          $files = @('src/care.ts', 'src/main.ts', 'src/popover.ts', 'src-tauri/src/lib.rs', 'src-tauri/src/server.rs', 'src-tauri/src/codex_usage.rs', 'scripts/codex-usage.test.mjs')
           foreach ($file in $files) {
             Copy-Item -LiteralPath "repair/windows/$file" -Destination "upstream/windows/$file" -Force
           }
@@ -66,7 +66,7 @@ jobs:
           Copy-Item -LiteralPath 'repair/LICENSE' -Destination 'artifact/LICENSE'
           Copy-Item -LiteralPath 'repair/README.md' -Destination 'artifact/README.md'
           $hash = (Get-FileHash -LiteralPath 'artifact/agentpet.exe' -Algorithm SHA256).Hash
-          [ordered]@{repairCommit=$env:GITHUB_SHA;upstreamCommit='78633a1e62e349bf55c9232a25475a5308476e6a';sha256=$hash;officialRelease=$false;tests='frontend and Rust regression tests passed'} | ConvertTo-Json | Set-Content -LiteralPath 'artifact/build-manifest.json' -Encoding utf8
+          [ordered]@{repairCommit=$env:GITHUB_SHA;upstreamCommit='78633a1e62e349bf55c9232a25475a5308476e6a';sha256=$hash;officialRelease=$false;automaticUpdates=$false;tests='frontend and Rust regression tests passed'} | ConvertTo-Json | Set-Content -LiteralPath 'artifact/build-manifest.json' -Encoding utf8
       - name: Upload tested portable executable
         uses: actions/upload-artifact@v4
         with:
