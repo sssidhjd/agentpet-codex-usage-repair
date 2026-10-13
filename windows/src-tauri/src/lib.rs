@@ -241,7 +241,28 @@ fn resolve_approval(id: String, decision: String) {
 /// directory so clearing browser state can never erase the local accounting
 /// history or interfere with the pet's existing XP/cloud state.
 fn usage_ledger_path() -> Option<std::path::PathBuf> {
-    dirs::data_local_dir().map(|dir| dir.join("AgentPet").join("usage-ledger-v1.sqlite3"))
+    if let Some(path) = std::env::var_os("AGENTPET_USAGE_LEDGER_PATH")
+        .filter(|value| !value.is_empty())
+    {
+        return Some(std::path::PathBuf::from(path));
+    }
+
+    // Portable/custom installs keep all durable state beside the executable.
+    // This avoids Windows package/AppData virtualization producing two ledgers
+    // that look like the same `%LOCALAPPDATA%` path to different processes.
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(install_dir) = executable.parent() {
+            return Some(
+                install_dir
+                    .join("data")
+                    .join("usage")
+                    .join("usage-ledger-v1.sqlite3"),
+            );
+        }
+    }
+
+    dirs::data_local_dir()
+        .map(|dir| dir.join("AgentPet").join("usage-ledger-v1.sqlite3"))
 }
 
 #[tauri::command]

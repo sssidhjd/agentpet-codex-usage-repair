@@ -29,6 +29,9 @@ This is not an upstream release and the portable executable is not vendor-signed
 - Maintain an idempotent local SQLite shadow ledger over both active and archived
   Codex sessions. It tracks gross and cache-adjusted totals continuously without
   modifying transcripts, replaying usage, or awarding historical pet XP.
+- Keep that derived ledger in the portable AgentPet data directory (with an
+  environment override available), avoiding split state from Windows AppData
+  virtualization and allowing the ledger to be rebuilt from source logs.
 
 The reader does not modify Codex logs, change hooks trust, or upload conversations.
 Receipts stay local and are omitted from the existing web-profile sync payload.
