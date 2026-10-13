@@ -33,7 +33,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $files = @('src/activity.ts', 'src/bubble.ts', 'src/care.ts', 'src/demo.ts', 'src/i18n.ts', 'src/main.ts', 'src/popover.ts', 'src/reactive.ts', 'src/settings.ts', 'src/state.ts', 'src-tauri/src/codex_usage.rs', 'src-tauri/src/hooks.rs', 'src-tauri/src/lib.rs', 'src-tauri/src/server.rs', 'scripts/codex-usage.test.mjs')
+          $files = @('settings.html', 'src/activity.ts', 'src/bubble.ts', 'src/care.ts', 'src/demo.ts', 'src/i18n.ts', 'src/main.ts', 'src/popover.ts', 'src/reactive.ts', 'src/settings.ts', 'src/state.ts', 'src/styles.css', 'src-tauri/Cargo.toml', 'src-tauri/src/codex_account.rs', 'src-tauri/src/codex_usage.rs', 'src-tauri/src/hooks.rs', 'src-tauri/src/lib.rs', 'src-tauri/src/server.rs', 'src-tauri/src/usage_ledger.rs', 'scripts/codex-usage.test.mjs')
           foreach ($file in $files) {
             Copy-Item -LiteralPath "repair/windows/$file" -Destination "upstream/windows/$file" -Force
           }
@@ -51,9 +51,9 @@ jobs:
       - name: Type-check and build frontend
         working-directory: upstream/windows
         run: npm run build
-      - name: Run native parser and resolver regression tests
+      - name: Run all native regression tests
         working-directory: upstream/windows/src-tauri
-        run: cargo test --release --locked codex_usage::tests
+        run: cargo test --release
       - name: Build portable application
         working-directory: upstream/windows
         run: npm run tauri -- build --no-bundle
@@ -66,7 +66,8 @@ jobs:
           Copy-Item -LiteralPath 'repair/LICENSE' -Destination 'artifact/LICENSE'
           Copy-Item -LiteralPath 'repair/README.md' -Destination 'artifact/README.md'
           $hash = (Get-FileHash -LiteralPath 'artifact/agentpet.exe' -Algorithm SHA256).Hash
-          [ordered]@{repairCommit=$env:GITHUB_SHA;upstreamCommit='78633a1e62e349bf55c9232a25475a5308476e6a';sha256=$hash;officialRelease=$false;automaticUpdates=$false;tests='frontend and Rust regression tests passed'} | ConvertTo-Json | Set-Content -LiteralPath 'artifact/build-manifest.json' -Encoding utf8
+          Copy-Item -LiteralPath 'upstream/windows/src-tauri/Cargo.lock' -Destination 'artifact/Cargo.lock'
+          [ordered]@{repairCommit=$env:GITHUB_SHA;upstreamCommit='78633a1e62e349bf55c9232a25475a5308476e6a';sha256=$hash;officialRelease=$false;automaticUpdates=$false;tests='frontend and all Rust regression tests passed';usageLedger='informational only; historical rows are not XP eligible'} | ConvertTo-Json | Set-Content -LiteralPath 'artifact/build-manifest.json' -Encoding utf8
       - name: Upload tested portable executable
         uses: actions/upload-artifact@v4
         with:

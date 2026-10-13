@@ -23,6 +23,12 @@ This is not an upstream release and the portable executable is not vendor-signed
 - Complete the Simplified Chinese UI for Care, History, web-profile sync, stages,
   hunger, achievements, statistics, activity bubbles, reactive comments, tray
   status, integration notes, previews, and the locked-update status.
+- Read the official Codex account total, daily activity, and current rate-limit
+  window through the locally authenticated `codex app-server` protocol. Only a
+  fixed allowlist of aggregate fields is exposed; account identity is discarded.
+- Maintain an idempotent local SQLite shadow ledger over both active and archived
+  Codex sessions. It tracks gross and cache-adjusted totals continuously without
+  modifying transcripts, replaying usage, or awarding historical pet XP.
 
 The reader does not modify Codex logs, change hooks trust, or upload conversations.
 Receipts stay local and are omitted from the existing web-profile sync payload.
@@ -39,9 +45,10 @@ read access to repository contents and does not publish an upstream release.
 ## Verification status
 
 The local 7-case receipt test suite and TypeScript/Vite production build passed.
-Native parser tests and the complete Windows application must still be built and
-verified before installation. A successful workflow artifact means the automated
-checks passed, not that desktop/cloud end-to-end testing has already been completed.
+The cloud workflow additionally runs the account-protocol, ledger idempotency,
+native parser, and resolver regression suites before producing the executable.
+A successful workflow artifact means those automated checks passed, not that
+desktop/cloud end-to-end testing has already been completed.
 
 Before replacing an installation, close AgentPet normally and back up both the
 original executable and the WebView save directory. Preserve the application
@@ -52,8 +59,8 @@ desktop/web agreement, and two normal restarts without a duplicate increase.
 
 Codex transcript format is not a stable interface. Unknown or invalid usage events
 are ignored rather than guessed. Resets/truncations with unchanged file identity
-are handled conservatively to avoid inflating progress. Existing uncertain historical
-totals are preserved; this patch is not a retroactive audit of all account usage.
+are handled conservatively to avoid inflating progress. Official account totals and
+local transcript totals intentionally remain separate from XP-bearing usage.
 
 MIT license; upstream attribution is retained in LICENSE.
 

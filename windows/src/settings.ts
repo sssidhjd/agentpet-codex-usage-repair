@@ -99,6 +99,9 @@ function currentPetName(): string {
   return hit?.name || slug;
 }
 function renderCare() {
+  // Usage panels are independent from the selected pet and stay useful even if
+  // the local pet library has not finished loading yet.
+  void refreshUsagePanels();
   const slug = savedSlug();
   if (!slug) return;
   const s = care.stateFor(slug);
@@ -135,6 +138,292 @@ function renderCare() {
     .map((d) => `<div class="cbar-wrap" title="${fmtNum(d.tokens)}"><div class="cbar" style="height:${Math.max(3, Math.round((d.tokens / max) * 100))}%"></div><div class="cbar-lbl">${d.label}</div></div>`)
     .join("");
 }
+
+type JsonObject = Record<string, unknown>;
+
+interface CodexAccountSnapshot {
+  lifetimeTokens: number | null;
+  peakDailyTokens: number | null;
+  longestRunningTurnSec: number | null;
+  currentStreakDays: number | null;
+  longestStreakDays: number | null;
+  dailyUsageBuckets: Array<{ startDate: string; tokens: number }>;
+  usedPercent: number | null;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+  updatedAt: number;
+  stale: boolean;
+  error: string | null;
+}
+
+interface UsageLedgerStats {
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  grossTokens?: number;
+  effectiveTokens?: number;
+  todayGrossTokens?: number;
+  todayEffectiveTokens?: number;
+  eventCount?: number;
+  todayEventCount?: number;
+  sessionCount?: number;
+  todaySessionCount?: number;
+  fileCount?: number;
+  firstEventAt?: number | string | null;
+  lastEventAt?: number | string | null;
+  today?: string;
+}
+
+interface UsageScanProgress {
+  filesDiscovered?: number;
+  filesScanned?: number;
+  bytesTotal?: number;
+  bytesScanned?: number;
+  eventsSeen?: number;
+  eventsInserted?: number;
+  errorCount?: number;
+  currentFile?: string | null;
+  finished?: boolean;
+}
+
+const asObject = (value: unknown): JsonObject | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : null;
+
+const finiteNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+};
+
+const localeCode = () => {
+  if (getLang() === "zh") return "zh-CN";
+  if (getLang() === "zh-TW") return "zh-TW";
+  if (getLang() === "vi") return "vi-VN";
+  return "en-US";
+};
+
+function usageDate(value: unknown): Date | null {
+  if (typeof value === "string" && value.trim() && !/^\d+(?:\.\d+)?$/.test(value.trim())) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const epoch = finiteNumber(value);
+  if (epoch === null || epoch <= 0) return null;
+  const date = new Date(epoch >= 1e12 ? epoch : epoch * 1000);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function fmtUsageDate(value: unknown, withTime = false): string {
+  const date = usageDate(value);
+  if (!date) return "--";
+  return withTime
+    ? date.toLocaleString(localeCode(), { dateStyle: "short", timeStyle: "short" })
+    : date.toLocaleDateString(localeCode(), { year: "numeric", month: "short", day: "numeric" });
+}
+
+function fmtDuration(seconds: unknown): string {
+  const total = finiteNumber(seconds);
+  if (total === null || total < 0) return "--";
+  const rounded = Math.round(total);
+  if (rounded < 60) return `${rounded}${t("s")}`;
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  if (hours) return minutes ? `${hours}${t("h")} ${minutes}${t("m")}` : `${hours}${t("h")}`;
+  return `${minutes}${t("m")}`;
+}
+
+function usageText(id: string, value: string, resolved = true) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = value;
+  el.classList.toggle("usage-placeholder", !resolved);
+}
+
+function usageStatus(id: string, value: string, tone: "ok" | "warn" | "error" | "neutral" = "neutral") {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = value;
+  el.dataset.tone = tone;
+}
+
+function setUsageBusy(id: string, busy: boolean) {
+  const el = document.getElementById(id);
+  if (el) el.setAttribute("aria-busy", String(busy));
+}
+
+let usagePanelsRefreshing = false;
+let usagePanelsLastRefresh = 0;
+let latestLedgerProgress: UsageScanProgress | null = null;
+let latestLedgerValue: unknown = null;
+
+function renderAccountSnapshot(snapshot: CodexAccountSnapshot) {
+  const hasOfficialData = [snapshot.lifetimeTokens, snapshot.peakDailyTokens, snapshot.longestRunningTurnSec, snapshot.currentStreakDays]
+    .some((value) => finiteNumber(value) !== null);
+  const metric = (id: string, value: unknown, format: (n: number) => string = fmtNum) => {
+    const n = finiteNumber(value);
+    usageText(id, n === null ? "--" : format(n), n !== null);
+  };
+
+  metric("codex-account-lifetime", snapshot.lifetimeTokens);
+  metric("codex-account-peak", snapshot.peakDailyTokens);
+  metric("codex-account-longest", snapshot.longestRunningTurnSec, (n) => fmtDuration(n));
+  metric("codex-account-streak", snapshot.currentStreakDays, (n) => String(Math.max(0, Math.round(n))));
+
+  const best = finiteNumber(snapshot.longestStreakDays);
+  usageText(
+    "codex-account-streak-sub",
+    best === null ? t("days") : `${t("Best")} ${Math.round(best)} ${t("days")}`,
+    best !== null || finiteNumber(snapshot.currentStreakDays) !== null,
+  );
+
+  const used = finiteNumber(snapshot.usedPercent);
+  const clamped = Math.max(0, Math.min(100, used ?? 0));
+  usageText("codex-quota-value", used === null ? t("Not available") : `${clamped.toFixed(clamped % 1 ? 1 : 0)}%`, used !== null);
+  const fill = document.getElementById("codex-quota-fill");
+  if (fill) fill.style.width = `${clamped}%`;
+  const track = document.getElementById("codex-quota-track");
+  if (track) track.setAttribute("aria-valuenow", String(clamped));
+
+  const windowMins = finiteNumber(snapshot.windowDurationMins);
+  const windowDays = windowMins === null ? null : windowMins / 1440;
+  usageText(
+    "codex-quota-window",
+    windowDays === null ? t("Usage window unavailable") : `${Number.isInteger(windowDays) ? windowDays : windowDays.toFixed(1)} ${t("day window")}`,
+    windowDays !== null,
+  );
+  const reset = usageDate(snapshot.resetsAt);
+  usageText("codex-quota-reset", reset ? `${t("Resets")} ${fmtUsageDate(snapshot.resetsAt, true)}` : t("Reset time unavailable"), Boolean(reset));
+
+  const updated = usageDate(snapshot.updatedAt);
+  usageText("codex-account-updated", updated ? `${t("Updated")} ${fmtUsageDate(snapshot.updatedAt, true)}` : t("Update time unavailable"), Boolean(updated));
+  if (!hasOfficialData) {
+    usageStatus("codex-account-status", t("Unavailable"), "error");
+    usageText("codex-account-message", t("Official usage is temporarily unavailable."));
+  } else if (snapshot.stale || snapshot.error) {
+    usageStatus("codex-account-status", t("Cached data"), "warn");
+    usageText("codex-account-message", t("Showing the last successful official snapshot."));
+  } else {
+    usageStatus("codex-account-status", t("Official data updated"), "ok");
+    usageText("codex-account-message", t("Official account data does not affect pet XP."));
+  }
+  setUsageBusy("codex-account-card", false);
+}
+
+function renderAccountUnavailable() {
+  ["codex-account-lifetime", "codex-account-peak", "codex-account-longest", "codex-account-streak", "codex-account-streak-sub",
+    "codex-quota-value", "codex-quota-window", "codex-quota-reset", "codex-account-updated"]
+    .forEach((id) => usageText(id, "--", false));
+  const fill = document.getElementById("codex-quota-fill");
+  if (fill) fill.style.width = "0%";
+  const track = document.getElementById("codex-quota-track");
+  if (track) track.setAttribute("aria-valuenow", "0");
+  usageStatus("codex-account-status", t("Unavailable"), "error");
+  usageText("codex-account-message", t("Official usage is temporarily unavailable."));
+  setUsageBusy("codex-account-card", false);
+}
+
+function scanProgressFrom(value: unknown): UsageScanProgress | null {
+  const root = asObject(value);
+  if (!root) return latestLedgerProgress;
+  const scan = asObject(root.scan) || asObject(root.progress);
+  if (!scan) return latestLedgerProgress;
+  const nested = asObject(scan.progress) || scan;
+  return nested as UsageScanProgress;
+}
+
+function renderLedgerStats(value: unknown) {
+  latestLedgerValue = value;
+  const root = asObject(value) || {};
+  const stats = (asObject(root.stats) || root) as UsageLedgerStats;
+  const progress = scanProgressFrom(value);
+  const metric = (id: string, value: unknown, format: (n: number) => string = fmtNum) => {
+    const n = finiteNumber(value);
+    usageText(id, n === null ? "--" : format(n), n !== null);
+  };
+
+  metric("local-codex-gross", stats.grossTokens);
+  metric("local-codex-effective", stats.effectiveTokens);
+  metric("local-codex-sessions", stats.sessionCount, (n) => Math.max(0, Math.round(n)).toLocaleString(localeCode()));
+
+  const eventCount = finiteNumber(stats.eventCount);
+  const fileCount = finiteNumber(stats.fileCount);
+  usageText(
+    "local-codex-session-sub",
+    eventCount === null ? t("usage events") : `${Math.round(eventCount).toLocaleString(localeCode())} ${t("usage events")}`,
+    eventCount !== null,
+  );
+
+  const first = usageDate(stats.firstEventAt);
+  const last = usageDate(stats.lastEventAt);
+  usageText("local-codex-coverage", first && last ? `${fmtUsageDate(stats.firstEventAt)} - ${fmtUsageDate(stats.lastEventAt)}` : "--", Boolean(first && last));
+  usageText("local-codex-coverage-sub", first && last ? t("first to latest event") : t("Coverage unavailable"), Boolean(first && last));
+
+  if (progress && !progress.finished) {
+    const doneBytes = finiteNumber(progress.bytesScanned) ?? 0;
+    const totalBytes = finiteNumber(progress.bytesTotal) ?? 0;
+    const doneFiles = finiteNumber(progress.filesScanned) ?? 0;
+    const totalFiles = finiteNumber(progress.filesDiscovered) ?? 0;
+    const pct = totalBytes > 0 ? Math.round((doneBytes / totalBytes) * 100) : totalFiles > 0 ? Math.round((doneFiles / totalFiles) * 100) : 0;
+    usageStatus("local-codex-status", `${t("Scanning local records")} ${Math.max(0, Math.min(100, pct))}%`, "warn");
+    usageText("local-codex-message", t("The first scan may take a while and runs in the background."));
+    usageText("local-codex-scan", totalFiles > 0 ? `${Math.round(doneFiles)} / ${Math.round(totalFiles)} ${t("files")}` : t("Scanning"));
+  } else {
+    const errors = finiteNumber(progress?.errorCount) ?? 0;
+    const empty = (fileCount ?? 0) === 0 && (eventCount ?? 0) === 0 && !first && !last;
+    usageStatus(
+      "local-codex-status",
+      empty ? t("No local records yet") : errors > 0 ? t("Complete with skipped files") : t("Ready"),
+      errors > 0 ? "warn" : empty ? "neutral" : "ok",
+    );
+    usageText(
+      "local-codex-message",
+      empty ? t("Local totals will appear after the first scan.") : t("Local totals are calculated from this computer's Codex logs."),
+    );
+    const details: string[] = [];
+    if (fileCount !== null) details.push(`${Math.round(fileCount).toLocaleString(localeCode())} ${t("files")}`);
+    if (eventCount !== null) details.push(`${Math.round(eventCount).toLocaleString(localeCode())} ${t("events")}`);
+    usageText("local-codex-scan", empty ? t("Waiting for scan") : details.length ? details.join(" / ") : t("Statistics ready"), !empty && details.length > 0);
+  }
+  setUsageBusy("local-codex-card", false);
+}
+
+function renderLedgerUnavailable() {
+  ["local-codex-gross", "local-codex-effective", "local-codex-sessions", "local-codex-session-sub", "local-codex-coverage", "local-codex-coverage-sub", "local-codex-scan"]
+    .forEach((id) => usageText(id, "--", false));
+  usageStatus("local-codex-status", t("Unavailable"), "error");
+  usageText("local-codex-message", t("Local usage records are temporarily unavailable."));
+  setUsageBusy("local-codex-card", false);
+}
+
+function withUsageTimeout<T>(promise: Promise<T>, timeoutMs = 25_000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error("usage-timeout")), timeoutMs);
+    promise.then(
+      (value) => { window.clearTimeout(timer); resolve(value); },
+      (error) => { window.clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
+async function refreshUsagePanels(force = false) {
+  const now = Date.now();
+  if (usagePanelsRefreshing || (!force && now - usagePanelsLastRefresh < 30_000)) return;
+  usagePanelsRefreshing = true;
+  usagePanelsLastRefresh = now;
+  try {
+    const [account, ledger] = await Promise.allSettled([
+      withUsageTimeout(Promise.resolve().then(() => invoke<CodexAccountSnapshot>("get_codex_account_snapshot"))),
+      withUsageTimeout(Promise.resolve().then(() => invoke<unknown>("get_usage_ledger_stats"))),
+    ]);
+    if (account.status === "fulfilled") renderAccountSnapshot(account.value);
+    else renderAccountUnavailable();
+    if (ledger.status === "fulfilled") renderLedgerStats(ledger.value);
+    else renderLedgerUnavailable();
+  } finally {
+    usagePanelsRefreshing = false;
+  }
+}
+
 // Click the pet's name to rename it; Enter or blur saves (empty resets to the
 // default). The custom name flows to the HUD, menubar, and web leaderboard.
 function setupRename() {
@@ -170,6 +459,19 @@ setupRename();
 
 // Refresh when the pet window feeds the pet, and periodically for the hunger clock.
 listen("care-updated", () => { if (document.querySelector('.page[data-page="care"].sel')) renderCare(); });
+listen<UsageScanProgress>("usage-ledger-progress", (event) => {
+  latestLedgerProgress = event.payload;
+  if (!document.querySelector('.page[data-page="care"].sel')) return;
+  if (event.payload.finished) {
+    // Refresh the SQLite totals once when a pass completes.  Do not re-query
+    // the official account endpoint for every local scan progress event.
+    void invoke<unknown>("get_usage_ledger_stats")
+      .then((value) => renderLedgerStats(value))
+      .catch(() => renderLedgerUnavailable());
+  } else if (latestLedgerValue !== null) {
+    renderLedgerStats(latestLedgerValue);
+  }
+});
 setInterval(() => { if (document.querySelector('.page[data-page="care"].sel')) renderCare(); }, 30_000);
 
 // ---- web profile / leaderboard sign-in ----
@@ -1235,13 +1537,36 @@ function applyStatic() {
   set("t-care-today", "Today");
   set("t-care-streak", "Streak");
   set("t-care-streak-sub", "days fed");
-  set("t-care-lifetime", "Lifetime");
-  set("t-care-lifetime-sub", "tokens eaten");
+  set("t-care-lifetime", "Counted toward pet XP");
+  set("t-care-lifetime-sub", "feeding tokens counted");
   set("t-care-sessions", "Sessions");
   set("t-care-sessions-sub", "completed");
   set("t-care-cost", "Est. cost (Claude)");
   set("t-care-burn", "Burn, last 7 days");
   set("t-care-help", "Your pet eats the real tokens your agents burn and the sessions they finish. Feeding earns XP; it levels up through five stages.");
+  // Official account usage and local Codex ledger. These are read-only totals;
+  // only the companion card above controls pet XP.
+  set("t-codex-account", "Codex official account");
+  set("t-codex-lifetime", "Account total");
+  set("t-codex-lifetime-sub", "tokens reported by Codex");
+  set("t-codex-peak", "Daily peak");
+  set("t-codex-peak-sub", "tokens in one day");
+  set("t-codex-longest", "Longest task");
+  set("t-codex-longest-sub", "longest running turn");
+  set("t-codex-streak", "Current streak");
+  set("t-codex-quota", "Official usage window");
+  set("codex-account-status", "Loading official usage…");
+  set("codex-account-message", "Official usage is temporarily unavailable.");
+  set("t-local-codex", "Local Codex records");
+  set("t-local-gross", "Total including cache");
+  set("t-local-gross-sub", "input including cache and output");
+  set("t-local-effective", "Effective tokens");
+  set("t-local-effective-sub", "uncached input and output");
+  set("t-local-sessions", "Sessions found");
+  set("t-local-coverage", "Coverage");
+  set("local-codex-coverage-sub", "first to latest event");
+  set("local-codex-status", "Reading local records…");
+  set("local-codex-message", "The first scan may take a while and runs in the background.");
   set("t-webprofile", "Web profile");
   set("t-sync-desc", "Show your companions on your web profile and the leaderboard.");
   set("t-sync-signin", "Sign in with GitHub");
@@ -1436,4 +1761,3 @@ initSliders();
 initSegs();
 initMisc();
 initDemo();
-

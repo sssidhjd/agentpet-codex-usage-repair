@@ -4,6 +4,8 @@ pub mod server;
 pub mod statemap;
 pub mod transcript;
 pub mod codex_usage;
+pub mod codex_account;
+pub mod usage_ledger;
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -235,6 +237,64 @@ fn resolve_approval(id: String, decision: String) {
     crate::server::resolve_approval(&id, &decision);
 }
 
+/// The usage ledger is informational only.  Keep it outside the WebView data
+/// directory so clearing browser state can never erase the local accounting
+/// history or interfere with the pet's existing XP/cloud state.
+fn usage_ledger_path() -> Option<std::path::PathBuf> {
+    dirs::data_local_dir().map(|dir| dir.join("AgentPet").join("usage-ledger-v1.sqlite3"))
+}
+
+#[tauri::command]
+async fn get_usage_ledger_stats() -> Result<usage_ledger::UsageStats, String> {
+    let path = usage_ledger_path().ok_or_else(|| "ledger_path_unavailable".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        usage_ledger::UsageLedger::open(&path).and_then(|ledger| ledger.stats())
+    })
+    .await
+    .map_err(|_| "ledger_worker_failed".to_string())?
+    .map_err(|_| "ledger_unavailable".to_string())
+}
+
+/// Scan Codex transcripts continuously in a low-priority background thread.
+/// Rows are idempotent and carry `xp_eligible = 0`, so this can update the
+/// informational totals without ever changing pet levels or cloud sync data.
+fn start_usage_ledger(app: tauri::AppHandle) {
+    let Some(path) = usage_ledger_path() else {
+        return;
+    };
+    std::thread::spawn(move || loop {
+        let result = usage_ledger::UsageLedger::open(&path).and_then(|mut ledger| {
+            let roots = usage_ledger::UsageLedger::default_roots();
+            let progress_app = app.clone();
+            ledger.scan_roots(&roots, move |progress| {
+                // A first scan can contain hundreds of files.  Ten-file
+                // updates keep the UI responsive without flooding WebView IPC.
+                if progress.files_scanned == 0
+                    || progress.finished
+                    || progress.files_scanned % 10 == 0
+                {
+                    let mut public_progress = progress.clone();
+                    // The UI only needs counts. Do not expose a private local
+                    // transcript path to the WebView event stream.
+                    public_progress.current_file = None;
+                    let _ = progress_app.emit("usage-ledger-progress", public_progress);
+                }
+            })
+        });
+        if let Ok(report) = result {
+            let _ = app.emit("usage-ledger-progress", report.progress);
+        } else {
+            let failed = usage_ledger::ScanProgress {
+                error_count: 1,
+                finished: true,
+                ..usage_ledger::ScanProgress::default()
+            };
+            let _ = app.emit("usage-ledger-progress", failed);
+        }
+        std::thread::sleep(Duration::from_secs(60));
+    });
+}
+
 /// Split-pet: ensure exactly one extra pet window `pet-<projectId>` exists per
 /// configured project, cloning the main pet's chrome. Each loads `index.html`
 /// with a `?project=<id>` query so its script shows only that project. Closing
@@ -434,11 +494,14 @@ pub fn run() {
             get_pet_visible,
             open_popover,
             log_debug,
-            set_hit_rect
+            set_hit_rect,
+            codex_account::get_codex_account_snapshot,
+            get_usage_ledger_stats
         ])
         .setup(|app| {
             server::start(app.handle().clone());
             codex_usage::start(app.handle().clone());
+            start_usage_ledger(app.handle().clone());
             app.manage(Mutex::new(HitRect::default()));
 
             // Restore where the user last dragged the pet. First run (no saved
@@ -615,4 +678,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running AgentPet");
 }
-
