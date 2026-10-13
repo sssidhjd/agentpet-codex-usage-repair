@@ -20,6 +20,9 @@ This is not an upstream release and the portable executable is not vendor-signed
 - Disable automatic and one-click in-place updates for this customized executable,
   because an upstream replacement would remove the reviewed local repairs. Future
   upgrades must be rebuilt from the repair overlay first.
+- Complete the Simplified Chinese UI for Care, History, web-profile sync, stages,
+  hunger, achievements, statistics, activity bubbles, reactive comments, tray
+  status, integration notes, previews, and the locked-update status.
 
 The reader does not modify Codex logs, change hooks trust, or upload conversations.
 Receipts stay local and are omitted from the existing web-profile sync payload.
@@ -29,7 +32,7 @@ No authentication, TLS, updater signature, or browser security controls are disa
 
 The workflow builds on a GitHub-hosted Windows runner; it does not install Rust or
 Microsoft C++ tools on the user's computer. It checks out the pinned upstream source,
-copies the six-file overlay, runs frontend and native regression tests, builds a
+copies the reviewed overlay, runs frontend and native regression tests, builds a
 portable executable, and uploads a SHA-256 manifest with the artifact. It has only
 read access to repository contents and does not publish an upstream release.
 
@@ -53,3 +56,4 @@ are handled conservatively to avoid inflating progress. Existing uncertain histo
 totals are preserved; this patch is not a retroactive audit of all account usage.
 
 MIT license; upstream attribution is retained in LICENSE.
+

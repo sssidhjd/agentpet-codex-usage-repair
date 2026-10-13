@@ -6,7 +6,7 @@ import { SessionStore, aggregateMood, basename, type AgentEventPayload } from ".
 import { BubbleRenderer } from "./bubble";
 import { loadCatalog, savedSlug, saveSlug } from "./catalog";
 import { t, setLang, type Lang } from "./i18n";
-import { bubbleLines, PET_CHAT } from "./activity";
+import { bubbleLines, petChatLines } from "./activity";
 import * as care from "./care";
 import * as sync from "./sync";
 import * as usage from "./usage";
@@ -181,7 +181,7 @@ function pickMoodLine(mood: string) {
   // Custom/system pools; working/waiting fall back to the PetChat lines so the
   // simple-bubble mode (multi-agent off) always has something to say.
   let pool = bubbleLines(null, mood);
-  if (!pool.length) pool = PET_CHAT[mood] ?? [];
+  if (!pool.length) pool = petChatLines(mood);
   moodLine = pool.length ? pool[Math.floor(Math.random() * pool.length)] : "";
 }
 
@@ -480,3 +480,4 @@ window.addEventListener("resize", reportHitRect);
 reportHitRect();
 
 render();
+

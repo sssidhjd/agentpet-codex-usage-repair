@@ -9,7 +9,7 @@ import { exit } from "@tauri-apps/plugin-process";
 import { SessionStore, basename, type AgentEventPayload, type Session } from "./state";
 import { agentIconUrl } from "./icons";
 import { elapsedString } from "./bubble";
-import { t } from "./i18n";
+import { t, setLang, type Lang } from "./i18n";
 
 const store = new SessionStore();
 const list = document.getElementById("pop-list")!;
@@ -120,7 +120,7 @@ updatesBtn.onclick = () => {
   // upstream releases do not yet contain. Updating it in place would silently
   // remove those fixes, so upgrades are installed only after rebuilding the
   // reviewed repair overlay.
-  label.textContent = "Repair build locked";
+  label.textContent = t("Repair build locked");
   setTimeout(() => { label.textContent = t("Updates"); }, 3000);
 };
 
@@ -140,6 +140,11 @@ window.addEventListener("keydown", (e) => {
 listen<AgentEventPayload>("agent-event", (e) => { store.update(e.payload); paintAndFit(); });
 listen<string>("agent-end", (e) => { store.remove(e.payload); paintAndFit(); });
 listen<Session>("session-snapshot", (e) => { store.seed(e.payload); paintAndFit(); });
+listen<Lang>("lang-changed", (e) => {
+  setLang(e.payload);
+  applyStatic();
+  paintAndFit();
+});
 // Re-sync + refresh whenever the popover is shown again.
 listen("popover-shown", () => {
   size.value = localStorage.getItem("ap_pet_size") || "100";
@@ -166,3 +171,4 @@ function paintAndFit() { origPaint(); fitWindow(); }
 setInterval(paintAndFit, 1000); // live elapsed + prune
 applyStatic();
 paintAndFit();
+

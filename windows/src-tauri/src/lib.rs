@@ -149,8 +149,9 @@ fn open_settings_impl(app: tauri::AppHandle) {
             .build()
         {
             Ok(w) => {
-                // Windows can create this webview without activating it, leaving it
-                // hidden behind the current foreground application.
+                // Windows can successfully create the webview without activating it,
+                // leaving the settings window hidden behind the current foreground app.
+                // Treat the first open exactly like the existing-window path above.
                 let _ = w.show();
                 let _ = w.unminimize();
                 let _ = w.set_focus();
@@ -290,10 +291,19 @@ fn set_lang(app: tauri::AppHandle, code: String) {
 fn set_tray_status(app: tauri::AppHandle, working: u32, waiting: u32) {
     if let Some(items) = app.try_state::<Mutex<TrayItems>>() {
         if let Ok(it) = items.lock() {
-            let tip = if waiting > 0 {
-                format!("AgentPet , {waiting} waiting for you")
+            let lang = read_lang();
+            let tip = if lang == "zh" {
+                if waiting > 0 {
+                    format!("AgentPet · {waiting} 个任务等待你")
+                } else if working > 0 {
+                    format!("AgentPet · {working} 个任务进行中")
+                } else {
+                    "AgentPet".to_string()
+                }
+            } else if waiting > 0 {
+                format!("AgentPet · {waiting} waiting for you")
             } else if working > 0 {
-                format!("AgentPet , {working} working")
+                format!("AgentPet · {working} working")
             } else {
                 "AgentPet".to_string()
             };
@@ -605,3 +615,4 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running AgentPet");
 }
+
